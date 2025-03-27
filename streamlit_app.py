@@ -1,56 +1,90 @@
 import streamlit as st
-from openai import OpenAI
+import pandas as pd
+import faiss
+import json
+import ollama
+from sentence_transformers import SentenceTransformer
 
-# Show title and description.
-st.title("💬 Chatbot")
-st.write(
-    "This is a simple chatbot that uses OpenAI's GPT-3.5 model to generate responses. "
-    "To use this app, you need to provide an OpenAI API key, which you can get [here](https://platform.openai.com/account/api-keys). "
-    "You can also learn how to build this app step by step by [following our tutorial](https://docs.streamlit.io/develop/tutorials/llms/build-conversational-apps)."
-)
+# --- Load FAISS index và dữ liệu sản phẩm ---
+df = pd.read_pickle("product_data.pkl")
+index = faiss.read_index("product.index")
+encoder = SentenceTransformer('BAAI/bge-small-en-v1.5')
 
-# Ask user for their OpenAI API key via `st.text_input`.
-# Alternatively, you can store the API key in `./.streamlit/secrets.toml` and access it
-# via `st.secrets`, see https://docs.streamlit.io/develop/concepts/connections/secrets-management
-openai_api_key = st.text_input("OpenAI API Key", type="password")
-if not openai_api_key:
-    st.info("Please add your OpenAI API key to continue.", icon="🗝️")
-else:
+# --- Bước 1: Trích sản phẩm từ câu hỏi bằng Mistral ---
+def extract_products_mistral(user_input):
+    prompt = (
+        "Bạn là trợ lý kỹ thuật nói tiếng Việt. Phân tích đoạn sau và trích xuất danh sách sản phẩm dưới dạng JSON. "
+        "Mỗi sản phẩm gồm: tên sản phẩm, số lượng (nếu có), kích thước (nếu có).\n"
+        f"Đoạn văn: {user_input}\n"
+        "Trả kết quả JSON đơn thuần, không giải thích."
+    )
 
-    # Create an OpenAI client.
-    client = OpenAI(api_key=openai_api_key)
+    response = ollama.chat(
+        model="mistral",
+        messages=[
+            {"role": "system", "content": "Bạn là trợ lý kỹ thuật chuyên phân tích sản phẩm."},
+            {"role": "user", "content": prompt}
+        ]
+    )
 
-    # Create a session state variable to store the chat messages. This ensures that the
-    # messages persist across reruns.
-    if "messages" not in st.session_state:
-        st.session_state.messages = []
+    content = response['message']['content']
+    try:
+        json_start = content.find("[")
+        json_end = content.rfind("]") + 1
+        return json.loads(content[json_start:json_end])
+    except Exception as e:
+        st.warning("Không phân tích được JSON từ mô hình.")
+        st.text(content)
+        return []
 
-    # Display the existing chat messages via `st.chat_message`.
-    for message in st.session_state.messages:
-        with st.chat_message(message["role"]):
-            st.markdown(message["content"])
+# --- Bước 2: Tìm kiếm sản phẩm trong FAISS ---
+def search_by_product_names(product_list, top_k=2):
+    results = []
+    for p in product_list:
+        name = p.get("tên sản phẩm", "")
+        if not name:
+            continue
+        q_vector = encoder.encode([name])
+        D, I = index.search(q_vector, top_k)
+        found = df.iloc[I[0]].to_dict(orient="records")
+        results.extend(found)
+    return results
 
-    # Create a chat input field to allow the user to enter a message. This will display
-    # automatically at the bottom of the page.
-    if prompt := st.chat_input("What is up?"):
+# --- Bước 3: Gọi lại Mistral để trả lời ---
+def chatbot_reply_with_context(user_input, product_info_list):
+    product_text = "\n".join([f"- {p['name']}: {p['description']}" for p in product_info_list])
+    final_prompt = (
+        f"Người dùng hỏi: \"{user_input}\"\n\n"
+        f"Dưới đây là các sản phẩm liên quan tìm được:\n{product_text}\n\n"
+        "Hãy trả lời người dùng bằng tiếng Việt, rõ ràng, gợi ý sản phẩm phù hợp."
+    )
 
-        # Store and display the current prompt.
-        st.session_state.messages.append({"role": "user", "content": prompt})
-        with st.chat_message("user"):
-            st.markdown(prompt)
+    response = ollama.chat(
+        model="mistral",
+        messages=[
+            {"role": "system", "content": "Bạn là trợ lý kỹ thuật chuyên tư vấn sản phẩm, nói tiếng Việt."},
+            {"role": "user", "content": final_prompt}
+        ]
+    )
 
-        # Generate a response using the OpenAI API.
-        stream = client.chat.completions.create(
-            model="gpt-3.5-turbo",
-            messages=[
-                {"role": m["role"], "content": m["content"]}
-                for m in st.session_state.messages
-            ],
-            stream=True,
-        )
+    return response['message']['content']
 
-        # Stream the response to the chat using `st.write_stream`, then store it in 
-        # session state.
-        with st.chat_message("assistant"):
-            response = st.write_stream(stream)
-        st.session_state.messages.append({"role": "assistant", "content": response})
+# --- Streamlit App ---
+st.title("🛠️ Chatbot Tư vấn Sản phẩm (Mistral + FAISS)")
+user_input = st.text_area("Nhập câu hỏi về sản phẩm:", height=100)
+
+if st.button("Gửi câu hỏi") and user_input:
+    with st.spinner("🤖 Đang phân tích..."):
+        products = extract_products_mistral(user_input)
+        matches = search_by_product_names(products)
+        answer = chatbot_reply_with_context(user_input, matches)
+
+    st.subheader("📋 Danh sách sản phẩm phân tích:")
+    st.json(products)
+
+    st.subheader("🔍 Kết quả tìm kiếm:")
+    for item in matches:
+        st.markdown(f"- **{item['name']}**: {item['description']}")
+
+    st.subheader("🧠 Trợ lý phản hồi:")
+    st.markdown(answer)
