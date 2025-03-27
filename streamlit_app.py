@@ -4,7 +4,20 @@ import faiss
 import json
 import ollama
 import os
+import requests
 from sentence_transformers import SentenceTransformer
+
+# --- Kiểm tra xem Ollama đã chạy chưa ---
+def check_ollama_running():
+    try:
+        r = requests.get("http://localhost:11434/api/tags", timeout=2)
+        return r.status_code == 200
+    except:
+        return False
+
+if not check_ollama_running():
+    st.error("⚠️ Ollama chưa chạy. Vui lòng mở terminal và chạy `ollama serve` hoặc `ollama run mistral` trước.")
+    st.stop()
 
 @st.cache_resource
 def load_encoder():
