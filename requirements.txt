@@ -3,4 +3,3 @@ pandas
 faiss-cpu
 sentence-transformers
 ollama
-:
