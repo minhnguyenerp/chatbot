@@ -5,6 +5,7 @@ import json
 import ollama
 import os
 import requests
+import subprocess
 from sentence_transformers import SentenceTransformer
 
 # --- Kiểm tra xem Ollama đã chạy chưa ---
@@ -15,6 +16,15 @@ def check_ollama_running():
     except:
         return False
 
+# --- Thử khởi động Ollama nếu chưa chạy ---
+def try_start_ollama():
+    if not check_ollama_running():
+        try:
+            subprocess.Popen(["ollama", "serve"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except Exception as e:
+            st.warning("Không thể tự động khởi động Ollama: " + str(e))
+
+try_start_ollama()
 if not check_ollama_running():
     st.error("⚠️ Ollama chưa chạy. Vui lòng mở terminal và chạy `ollama serve` hoặc `ollama run mistral` trước.")
     st.stop()
