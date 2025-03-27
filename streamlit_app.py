@@ -11,8 +11,8 @@ def load_encoder():
     return SentenceTransformer('BAAI/bge-small-en-v1.5')
 
 @st.cache_resource
-def build_index_from_csv(uploaded_file):
-    df = pd.read_csv(uploaded_file)
+def build_index_from_csv():
+    df = pd.read_csv("product.csv")
 
     if "name" not in df.columns or "description" not in df.columns:
         st.error("❌ CSV phải có 2 cột: name, description")
@@ -85,16 +85,15 @@ def chatbot_reply_with_context(user_input, product_info_list):
 
     return response['message']['content']
 
-
 # --- Giao diện Streamlit ---
-st.title("🛠️ Chatbot Tư vấn Sản phẩm (Upload CSV + Mistral + FAISS)")
+st.title("🛠️ Chatbot Tư vấn Sản phẩm (Mistral + FAISS)")
 
-uploaded_file = st.file_uploader("📂 Tải lên file sản phẩm (.csv)", type=["csv"])
-user_input = st.text_area("💬 Nhập câu hỏi về sản phẩm:", height=100)
-
-if uploaded_file:
-    df, index = build_index_from_csv(uploaded_file)
+# Tự động load product.csv
+try:
+    df, index = build_index_from_csv()
     encoder = load_encoder()
+
+    user_input = st.text_area("💬 Nhập câu hỏi về sản phẩm:", height=100)
 
     if st.button("🚀 Gửi câu hỏi") and user_input:
         with st.spinner("🤖 Đang phân tích..."):
@@ -111,5 +110,7 @@ if uploaded_file:
 
         st.subheader("🧠 Trợ lý phản hồi:")
         st.markdown(answer)
-else:
-    st.info("⬆️ Vui lòng tải lên file `product.csv` trước khi hỏi.")
+
+except Exception as e:
+    st.error("❌ Không thể load file product.csv. Đảm bảo file tồn tại và có cột name, description.")
+    st.exception(e)
